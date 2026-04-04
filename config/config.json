@@ -1,0 +1,32 @@
+{
+  "_comment": "스튜디오메이트 자동 연장 설정 파일",
+
+  "login": {
+    "id": "",
+    "password": ""
+  },
+
+  "_comment_headless": "headless: true이면 브라우저 창 없이 실행, false이면 브라우저 화면 표시 (디버깅용)",
+  "headless": true,
+
+  "schedule": {
+    "_comment_frequency": "실행 주기: daily(매일) / weekly(매주) / monthly(매월)",
+    "frequency": "weekly",
+
+    "_comment_time": "실행 시각 (HH:MM 형식, 24시간제, KST 기준)",
+    "time": "19:50",
+
+    "_comment_day_of_week": "weekly 주기일 때 사용. 요일: monday~sunday 또는 월~일",
+    "day_of_week": "saturday",
+
+    "_comment_day_of_month": "monthly 주기일 때 사용. 날짜: 1~28 (매월 해당 일에 실행)",
+    "day_of_month": 1
+  },
+
+  "keywords": [
+    "그룹수업",
+    "그룹레슨"
+  ],
+
+  "_comment_keywords": "수업 제목에 아래 키워드 중 하나라도 포함되면 자동 연장됩니다. 예: ['그룹레슨', '그룹수업']"
+}

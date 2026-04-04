@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  auto-launch:
+    build: .
+    container_name: studiomate_auto_launch
+    restart: always  # PC 재부팅 시 자동 재시작
+
+    # 볼륨: 코드 변경사항 즉시 반영 및 로그/스크린샷 확인
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./screenshots:/app/screenshots
+
+    # 즉시 실행 모드: 아래 주석 해제 후 docker-compose run --rm auto-launch
+    # command: ["python", "src/main.py", "--run-now"]
+
+    # 리소스 제한 (선택)
+    deploy:
+      resources:
+        limits:
+          memory: 1G
