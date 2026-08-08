@@ -52,7 +52,7 @@ class AppConfig:
     login_id: str
     login_password: str
     headless: bool
-
+    dry_run: bool
 
 def load_config(config_path: Path | None = None) -> AppConfig:
     """
@@ -114,10 +114,13 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     # ── headless 파싱 ──────────────────────────────────────────────────────
     headless = bool(raw.get("headless", True))
 
+    dry_run = bool(raw.get("dry_run", False))
+
     return AppConfig(
         schedule=schedule,
         keywords=keywords,
         login_id=login_id,
         login_password=login_password,
         headless=headless,
+        dry_run=dry_run,
     )

@@ -27,6 +27,9 @@ docker-compose build
 즉시 1회 실행 (테스트용)
 docker-compose run --rm auto-launch python src/main.py --run-now
 
+특정 날짜를 실행일로 가정한 DRY-RUN 테스트 (실제 종료일 변경 없음)
+docker-compose run --rm auto-launch python src/main.py --test-date 2026-07-25
+
 스케줄러 모드로 상시 실행 (PC 재부팅 시 자동 재시작)
 docker-compose up -d
 

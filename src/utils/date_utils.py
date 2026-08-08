@@ -1,5 +1,9 @@
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+
+KST = ZoneInfo("Asia/Seoul")
 
 
 def parse_korean_date(date_str: str) -> datetime:
@@ -31,6 +35,8 @@ def is_date_before(date_str: str, reference_str: str) -> bool:
     """
     return parse_korean_date(date_str) < parse_korean_date(reference_str)
 
+def is_date_after(date_str: str, reference_str: str) -> bool:
+    return parse_korean_date(date_str) > parse_korean_date(reference_str)
 
 def add_one_week(date_str: str) -> str:
     """
@@ -41,3 +47,27 @@ def add_one_week(date_str: str) -> str:
     dt = parse_korean_date(date_str)
     new_dt = dt + timedelta(weeks=1)
     return format_korean_date(new_dt)
+
+def subtract_one_week(data_str: str) -> str:
+    """
+    한국어 날짜 문자열에 7일을 뺀 날짜를 반환합니다.
+
+    예: '2026. 4. 12.' -> '2026. 4. 5.'
+    """
+    dt = parse_korean_date(data_str)
+    new_dt = dt - timedelta(weeks=1)
+    return format_korean_date(new_dt)
+
+def get_kst_today() -> date:
+    """컨테이너의 시스템 시간대와 관계없이 한국 기준 오늘 날짜를 반환합니다."""
+    return datetime.now(KST).date()
+
+
+def get_date_one_week_from_now(base_date: date | None = None) -> str:
+    """한국 기준 실행일(또는 전달한 기준일)의 7일 뒤 날짜를 반환합니다."""
+    if base_date is None:
+        base_date = get_kst_today()
+    target_date = base_date + timedelta(weeks=1)
+    return format_korean_date(
+        datetime(target_date.year, target_date.month, target_date.day)
+    )

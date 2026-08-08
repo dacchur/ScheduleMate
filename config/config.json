@@ -9,8 +9,11 @@
   "_comment_headless": "headless: true이면 브라우저 창 없이 실행, false이면 브라우저 화면 표시 (디버깅용)",
   "headless": true,
 
+  "_commnet_dry_run": "dry_run: true이면 실제 업데이트 없이 연장될 날짜만 확인 (테스트용)",
+  "dry_run": true,
+
   "schedule": {
-    "_comment_frequency": "실행 주기: daily(매일) / weekly(매주) / monthly(매월)",
+    "_comment_frequenccvay": "실행 주기: daily(매일) / weekly(매주) / monthly(매월)",
     "frequency": "weekly",
 
     "_comment_time": "실행 시각 (HH:MM 형식, 24시간제, KST 기준)",

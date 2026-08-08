@@ -12,6 +12,7 @@
 import asyncio
 import argparse
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -43,6 +44,16 @@ logger.add(
 )
 
 KST = pytz.timezone("Asia/Seoul")
+
+
+def parse_test_date(value: str):
+    """CLI의 YYYY-MM-DD 테스트 날짜를 date로 변환합니다."""
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(
+            f"테스트 날짜는 YYYY-MM-DD 형식이어야 합니다: '{value}'"
+        ) from e
 
 
 def build_cron_trigger(schedule: ScheduleConfig) -> CronTrigger:
@@ -136,16 +147,39 @@ async def run_scheduler() -> None:
 
 async def main() -> None:
     parser = argparse.ArgumentParser(
-        description="스튜디오메이트 그룹수업 종료일 자동 연장"
+        description="스튜디오메이트 그룹수업 종료일 자동 연장/롤백"
     )
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--run-now",
         action="store_true",
-        help="스케줄을 기다리지 않고 즉시 1회 실행",
+        help="스케줄을 기다리지 않고 즉시 1회 실행(연장)",
+    )
+    mode_group.add_argument(
+        "--test-date",
+        type=parse_test_date,
+        metavar="YYYY-MM-DD",
+        help="입력한 날짜를 실행일로 간주하여 DRY-RUN 테스트",
+    )
+    mode_group.add_argument(
+        "--rollback",
+        action="store_true",
+        help="종료일을 1주일씩 롤백 (테스트용)"
     )
     args = parser.parse_args()
 
-    if args.run_now:
+    if args.test_date:
+        logger.info(f"특정 날짜 DRY-RUN 테스트 모드: {args.test_date}")
+        result = await run_automation(
+            execution_date=args.test_date,
+            force_dry_run=True,
+        )
+        sys.exit(0 if result["success"] else 1)
+    elif args.rollback:
+        logger.info("롤백 모드")
+        # result = await run_rollback()
+        sys.exit(0 if result["success"] else 1)
+    elif args.run_now:
         logger.info("즉시 실행 모드")
         result = await run_automation()
         sys.exit(0 if result["success"] else 1)

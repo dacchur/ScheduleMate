@@ -1,5 +1,8 @@
 import asyncio
+import re
+from datetime import date, datetime
 from typing import List
+from zoneinfo import ZoneInfo
 from playwright.async_api import Page
 from loguru import logger
 
@@ -55,10 +58,12 @@ async def set_current_week(page: Page) -> None:
     - '이번주' 버튼이 활성화 상태면 클릭하여 현재 주로 이동
     - 이미 비활성화(disabled) 상태면 현재 주이므로 그대로 진행
     """
-    buttons_container = page.locator(".calendar-controls__buttons")
+    buttons_container = page.locator(".calendar-controls__buttons:visible").first
     await buttons_container.wait_for(state="visible")
 
-    this_week_btn = buttons_container.locator("button").filter(has_text="이번주")
+    this_week_btn = buttons_container.locator("button:visible").filter(
+        has_text="이번주"
+    ).first
     is_disabled = await this_week_btn.get_attribute("disabled")
     if is_disabled is None:
         await this_week_btn.click(force=True)
@@ -73,6 +78,67 @@ async def set_current_week(page: Page) -> None:
         logger.debug("'이번주' 버튼 클릭 → 현재 주로 이동")
     else:
         logger.debug("이미 현재 주 → 이동 불필요")
+
+
+async def set_previous_week(page: Page) -> None:
+    """현재 주간 뷰에서 바로 이전 주로 이동합니다."""
+    await _move_week(page, -1)
+
+
+async def _move_week(page: Page, direction: int) -> None:
+    """달력을 한 주 이전(-1) 또는 다음(+1)으로 이동합니다."""
+    buttons_container = page.locator(".calendar-controls__buttons:visible").first
+    await buttons_container.wait_for(state="visible")
+
+    # 달력 컨트롤은 [이전 주, 이번주, 다음 주] 순서로 구성됩니다.
+    buttons = buttons_container.locator("button:visible")
+    button_count = await buttons.count()
+    this_week_index = None
+    for index in range(button_count):
+        button = buttons.nth(index)
+        if "이번주" in (await button.inner_text()).strip():
+            this_week_index = index
+            break
+
+    if this_week_index is None:
+        raise RuntimeError("달력에서 '이번주' 버튼을 찾을 수 없습니다.")
+
+    target_index = this_week_index - 1 if direction < 0 else this_week_index + 1
+    if not 0 <= target_index < button_count:
+        raise RuntimeError(
+            f"달력 이동 버튼 위치가 올바르지 않습니다: "
+            f"이번주={this_week_index}, 대상={target_index}, 전체={button_count}"
+        )
+
+    target_button = buttons.nth(target_index)
+    await target_button.wait_for(state="visible", timeout=5_000)
+    await target_button.click()
+    try:
+        await page.locator(
+            ".el-loading-mask, .el-message-box__wrapper, .el-dialog__wrapper"
+        ).wait_for(state="hidden", timeout=10_000)
+    except Exception:
+        pass
+    await page.wait_for_timeout(800)
+    logger.debug("이전 주로 이동" if direction < 0 else "다음 주로 이동")
+
+
+async def set_week_for_date(page: Page, target_date: date) -> None:
+    """달력을 target_date가 속한 주로 이동합니다."""
+    await set_current_week(page)
+
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+    current_week_start = date.fromordinal(today.toordinal() - today.weekday())
+    target_week_start = date.fromordinal(
+        target_date.toordinal() - target_date.weekday()
+    )
+    week_offset = (target_week_start - current_week_start).days // 7
+
+    direction = -1 if week_offset < 0 else 1
+    for _ in range(abs(week_offset)):
+        await _move_week(page, direction)
+
+    logger.info(f"기준 날짜가 속한 주로 이동 완료: {target_date}")
 
 
 async def set_group_class_filter(page: Page) -> None:
@@ -107,12 +173,112 @@ async def set_group_class_filter(page: Page) -> None:
     logger.warning("'그룹수업' 탭을 찾지 못했습니다. 현재 필터 그대로 진행합니다.")
 
 
-async def collect_matching_lecture_ids(page: Page, keywords: List[str]) -> List[str]:
+def _parse_event_date(event_date_str: str, reference_date: date) -> date:
     """
-    현재 주간 뷰에서 키워드에 매칭되는 수업의 lecture ID 목록을 수집합니다.
+    일정 이벤트의 날짜를 파싱합니다.
+
+    화면에 연도가 없으면 실행일과 가장 가까운 연도를 선택하여
+    연말/연초를 걸친 최근 7일 범위도 처리합니다.
+    """
+    numbers = [int(value) for value in re.findall(r"\d+", event_date_str)]
+    if len(numbers) >= 3:
+        return date(numbers[0], numbers[1], numbers[2])
+    if len(numbers) != 2:
+        raise ValueError(f"날짜 파싱 실패: '{event_date_str}'")
+
+    month, day = numbers
+    candidates = [
+        date(year, month, day)
+        for year in (
+            reference_date.year - 1,
+            reference_date.year,
+            reference_date.year + 1,
+        )
+    ]
+    return min(candidates, key=lambda candidate: abs(candidate - reference_date))
+
+
+async def _get_event_date_str(page: Page, event) -> str | None:
+    """이벤트가 속한 캘린더 셀의 날짜 속성을 읽습니다."""
+    return await page.evaluate(
+        """(event) => {
+            const structuredDate = (value) => {
+                if (!value) return null;
+                const text = String(value);
+                const fullMatch = text.match(
+                    /(?:^|\\D)(\\d{4})[-./](\\d{1,2})[-./](\\d{1,2})(?:\\D|$)/
+                );
+                if (fullMatch) {
+                    return `${fullMatch[1]}.${fullMatch[2]}.${fullMatch[3]}`;
+                }
+
+                // 날짜 용도가 명확한 속성에 한해서만 월/일 형식을 허용합니다.
+                const shortMatch = text.match(
+                    /^\\s*(\\d{1,2})[-./]\\s*(\\d{1,2})[-./]?\\s*$/
+                );
+                return shortMatch ? `${shortMatch[1]}.${shortMatch[2]}` : null;
+            };
+
+            const dateAttributes = [
+                "data-date", "data-start", "data-start-date",
+                "datetime", "date"
+            ];
+
+            // 가장 신뢰할 수 있는 경우: 이벤트 또는 상위 날짜 셀에
+            // YYYY-MM-DD 형태의 날짜 속성이 있는 경우
+            for (let node = event; node; node = node.parentElement) {
+                for (const name of dateAttributes) {
+                    const parsed = structuredDate(node.getAttribute(name));
+                    if (parsed) return parsed;
+                }
+            }
+
+            // 날짜 헤더와 이벤트 영역이 별도 DOM인 달력 대응:
+            // 이벤트의 가로 중심점과 겹치는 data-date 셀을 찾습니다.
+            const eventRect = event.getBoundingClientRect();
+            const eventCenterX = eventRect.left + eventRect.width / 2;
+            const candidates = [];
+            for (const node of document.querySelectorAll(
+                "[data-date], [data-start], [data-start-date], [datetime]"
+            )) {
+                let parsed = null;
+                for (const name of dateAttributes) {
+                    parsed = structuredDate(node.getAttribute(name));
+                    if (parsed) break;
+                }
+                if (!parsed) continue;
+
+                const rect = node.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) continue;
+                if (rect.left <= eventCenterX && eventCenterX <= rect.right) {
+                    candidates.push({
+                        date: parsed,
+                        distance: Math.abs(
+                            rect.left + rect.width / 2 - eventCenterX
+                        ),
+                    });
+                }
+            }
+
+            candidates.sort((a, b) => a.distance - b.distance);
+            return candidates.length ? candidates[0].date : null;
+        }""",
+        await event.element_handle(),
+    )
+
+
+async def collect_matching_lecture_ids(
+    page: Page,
+    keywords: List[str],
+    range_start: date,
+    range_end: date,
+) -> List[str]:
+    """
+    현재 표시된 주간 뷰에서 날짜 범위와 키워드에 매칭되는 수업 ID를 수집합니다.
 
     1) 모든 event-item의 텍스트를 클릭 없이 읽어 키워드 매칭 여부 확인
-    2) 매칭된 이벤트는 href 속성에서 ID 직접 추출 (클릭 불필요)
+    2) range_start <= 수업일 <= range_end 인지 확인
+    3) 매칭된 이벤트는 href 속성에서 ID 직접 추출 (클릭 불필요)
        → href 없을 경우 클릭 → URL에서 ID 추출 → 뒤로 이동 (폴백)
     """
     lecture_ids: List[str] = []
@@ -125,9 +291,32 @@ async def collect_matching_lecture_ids(page: Page, keywords: List[str]) -> List[
         event = events.nth(event_idx)
         event_text = (await event.inner_text()).strip()
 
-        if not any(kw in event_text for kw in keywords):
+        event_date_str = await _get_event_date_str(page, event)
+        if not event_date_str:
+            logger.warning(
+                f"[{event_idx}] 캘린더 셀에서 날짜를 찾을 수 없음: "
+                f"{event_text[:80]}..."
+            )
             continue
 
+        try:
+            event_date = _parse_event_date(event_date_str, range_end)
+        except ValueError as e:
+            logger.warning(f"[{event_idx}] {e}")
+            continue
+
+        logger.debug(f"[{event_idx}] 이벤트 날짜: {event_date}")
+        if not range_start <= event_date <= range_end:
+            logger.debug(
+                f"[{event_idx}] 대상 기간 밖 수업 → 제외 "
+                f"({range_start} ~ {range_end})"
+            )
+            continue
+
+        if not any(keyword in event_text for keyword in keywords):
+            continue
+
+        logger.info(f"[{event_idx}] 키워드 일치 수업: '{event_text[:80]}'")
         # ── href에서 직접 ID 추출 시도 (클릭 없이) ─────────────────────────
         lecture_id = await page.evaluate(
             """(el) => {
@@ -147,14 +336,16 @@ async def collect_matching_lecture_ids(page: Page, keywords: List[str]) -> List[
         else:
             # ── 폴백: 클릭 → URL에서 ID 추출 → 뒤로 이동 ─────────────────
             logger.info(f"[{event_idx}] href 없음 → 클릭으로 ID 수집")
-            await page.mouse.move(400, 30)
-            try:
-                await page.wait_for_function(
-                    "() => document.querySelectorAll('div[role=\"tooltip\"][aria-hidden=\"false\"]').length === 0",
-                    timeout=1_000,
-                )
-            except Exception:
-                pass
+
+            # 열려있는 popover가 있는지 확인하고 있으면 ESC로 닫기
+            has_open_popover = await page.evaluate(
+                "() => document.querySelectorAll('div[role=\"tooltip\"][aria-hidden=\"false\"]').length > 0"
+            )
+            if has_open_popover:
+                logger.debug(f"[{event_idx}] 열려있는 popover 감지 -> ESC로 닫기")
+                await page.keyboard.press("Escape")
+                await page.wait_for_timeout(300)
+
             await event.click()
             await page.wait_for_url("**/lecture/detail**", timeout=10_000)
 
